@@ -461,10 +461,6 @@ internal class NetworkingPeer : LoadBalancingPeer, IPhotonPeerListener
 	private AsyncOperation _AsyncLevelLoadingOperation;
 
 
-	// used for the reloading raised event.
-	private RaiseEventOptions _levelReloadEventOptions = new RaiseEventOptions (){Receivers = ReceiverGroup.Others};
-
-
     public NetworkingPeer(string playername, ConnectionProtocol connectionProtocol) : base(connectionProtocol)
     {
         this.Listener = this;
@@ -834,12 +830,6 @@ internal class NetworkingPeer : LoadBalancingPeer, IPhotonPeerListener
         {
             PhotonHandler.PingImplementation = typeof(PingMono);
         }
-
-
-        #if NET_4_6 && (UNITY_EDITOR || !ENABLE_IL2CPP)
-        this.SocketImplementationConfig[ConnectionProtocol.Udp] = typeof(SocketUdpAsync);
-        this.SocketImplementationConfig[ConnectionProtocol.Tcp] = typeof(SocketTcpAsync);
-        #endif
 
 
         if (this.TransportProtocol == protocolOverride)
@@ -1257,7 +1247,7 @@ internal class NetworkingPeer : LoadBalancingPeer, IPhotonPeerListener
             return;
         }
 
-        Room current = new Room(this.enterRoomParamsCache.RoomName, this.enterRoomParamsCache.RoomOptions);
+        Room current = new Room(this.enterRoomParamsCache.RoomName, null);
         current.IsLocalClientInside = true;
         this.CurrentRoom = current;
 
@@ -2736,25 +2726,16 @@ internal class NetworkingPeer : LoadBalancingPeer, IPhotonPeerListener
                 this.tokenCache = this.AuthValues.Token;
                 break;
 
-		case PunEvent.levelReload:
 
-			if ((bool)photonEvent.Parameters[ParameterCode.Data])
-			{
-				PhotonNetwork.LoadLevelAsync(SceneManagerHelper.ActiveSceneName);
-			}else{
-				PhotonNetwork.LoadLevel(SceneManagerHelper.ActiveSceneName);
-			}
-			break;
-
-        default:
-            if (photonEvent.Code < 200)
-            {
-				if (!PhotonNetwork.CallEvent(photonEvent.Code, photonEvent [ParameterCode.Data], actorNr))
-				{
-					Debug.LogWarning("Warning: Unhandled event " + photonEvent + ". Set PhotonNetwork.OnEventCall.");
-				}
-            }
-            break;
+            default:
+                if (photonEvent.Code < 200)
+                {
+					if (!PhotonNetwork.CallEvent(photonEvent.Code, photonEvent [ParameterCode.Data], actorNr))
+					{
+						Debug.LogWarning("Warning: Unhandled event " + photonEvent + ". Set PhotonNetwork.OnEventCall.");
+					}
+                }
+                break;
         }
 
         //this.externalListener.OnEvent(photonEvent);
@@ -3729,7 +3710,7 @@ internal class NetworkingPeer : LoadBalancingPeer, IPhotonPeerListener
         opParameters[ParameterCode.Code] = (byte)0;		// any event
         opParameters[ParameterCode.Cache] = (byte)EventCaching.RemoveFromRoomCacheForActorsLeft;    // option to clear the room cache of all events of players who left
 
-        this.OpCustom((byte)OperationCode.RaiseEvent, opParameters, true, 0);
+        this.SendOperation((byte)OperationCode.RaiseEvent, opParameters, SendOptions.SendReliable);
     }
 
     // Remove RPCs of view (if they are local player's RPCs)
@@ -4677,11 +4658,8 @@ internal class NetworkingPeer : LoadBalancingPeer, IPhotonPeerListener
 			}
         }
     }
-
-	public bool IsReloadingLevel;
-	public bool AsynchLevelLoadCall;
-
-	protected internal void SetLevelInPropsIfSynced(object levelId,bool initiatingCall, bool asyncLoading = false)
+	
+	protected internal void SetLevelInPropsIfSynced(object levelId, bool asyncLoading = false)
     {
         if (!PhotonNetwork.automaticallySyncScene || !PhotonNetwork.isMasterClient || PhotonNetwork.room == null)
         {
@@ -4699,35 +4677,13 @@ internal class NetworkingPeer : LoadBalancingPeer, IPhotonPeerListener
             object levelIdInProps = PhotonNetwork.room.CustomProperties[NetworkingPeer.CurrentSceneProperty];
             if (levelIdInProps is int && SceneManagerHelper.ActiveSceneBuildIndex == (int)levelIdInProps)
             {
-
-				SendLevelReloadEvent();
                 return;
             }
             if (levelIdInProps is string && SceneManagerHelper.ActiveSceneName != null && SceneManagerHelper.ActiveSceneName.Equals((string)levelIdInProps))
             {
-
-					bool _isreload = false;
-
-					if (!IsReloadingLevel)
-					{
-						if (levelId is int) _isreload = (int)levelId == SceneManagerHelper.ActiveSceneBuildIndex;
-						else if (levelId is string) _isreload = SceneManagerHelper.ActiveSceneName.Equals((string)levelId);
-					}
-
-					if (initiatingCall && IsReloadingLevel)
-					{
-						_isreload = false;
-					}
-
-					if (_isreload)
-					{
-						SendLevelReloadEvent();
-					}
-
                 return;
             }
         }
-
 
         // current level is not yet in props, so this client has to set it
         Hashtable setScene = new Hashtable();
@@ -4743,21 +4699,6 @@ internal class NetworkingPeer : LoadBalancingPeer, IPhotonPeerListener
         PhotonNetwork.room.SetCustomProperties(setScene);
         this.SendOutgoingCommands();    // send immediately! because: in most cases the client will begin to load and not send for a while
     }
-
-
-	/// <summary>
-	/// Sends the level reload event when we detect that the scene has been reloaded and that we have automaticallySyncScene turned on.
-	/// </summary>
-	void SendLevelReloadEvent()
-	{
-		IsReloadingLevel = true;
-
-		if (PhotonNetwork.inRoom)
-		{
-			this.OpRaiseEvent (PunEvent.levelReload, AsynchLevelLoadCall, true, _levelReloadEventOptions);
-		}
-	}
-
 
 
 
@@ -4778,7 +4719,7 @@ internal class NetworkingPeer : LoadBalancingPeer, IPhotonPeerListener
         opParameters.Add(ParameterCode.UriPath, uriPath);
         opParameters.Add(ParameterCode.WebRpcParameters, parameters);
 
-        return this.OpCustom(OperationCode.WebRpc, opParameters, true);
+        return this.SendOperation(OperationCode.WebRpc, opParameters, SendOptions.SendReliable);
 
     }
 }
